@@ -1,7 +1,7 @@
 # Steam Trophy Hunter
 
 A lightweight HTML toolkit for tracking and hunting Steam achievements across multiple games.
-![Uploading steam_tropyhunter_preview.webp…]()
+![steam_tropyhunter_preview](https://github.com/user-attachments/assets/157a4881-0ec6-4702-be35-03e33b7064ae)
 
 ## ✨ Features
 
