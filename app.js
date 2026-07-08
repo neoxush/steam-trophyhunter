@@ -651,12 +651,8 @@ async function submitAddGame() {
             updateUI();
             closeAddGameModal();
             let msg = `Added ${gameName} with ${realAchievements.length} achievements!`;
-            // If Steam reported a higher total than we could parse, be honest
-            // about the delta — those are almost certainly hidden achievements.
-            if (addGamePasteResult && typeof addGamePasteResult.reportedTotal === 'number'
-                && addGamePasteResult.reportedTotal > realAchievements.length) {
-                const missing = addGamePasteResult.reportedTotal - realAchievements.length;
-                msg += ` (${missing} hidden — they'll appear once unlocked.)`;
+            if (addGamePasteResult && addGamePasteResult.hiddenCount > 0) {
+                msg += ` (${addGamePasteResult.hiddenCount} hidden — placeholders added.)`;
             }
             showNotification(msg, 'success');
         } else {
@@ -821,6 +817,45 @@ function parseSteamAchievementsPaste(text) {
     // Whichever strategy found more rows wins. If tied, prefer Personal
     // because it also carries achieved-status data.
     result.achievements = personalRows.length >= globalRows.length ? personalRows : globalRows;
+
+    // Hidden-count padding. Steam pages advertise a total ("17 of 43") and,
+    // separately, count hidden achievements the paste doesn't enumerate
+    // ("+1 / 1 hidden achievement remaining"). If we know the delta, pad
+    // with placeholder rows so Trophy Hunter's total matches Steam's total.
+    // This mirrors Steam's own presentation — locked, name-hidden rows —
+    // rather than silently under-reporting.
+    let hiddenCount = 0;
+    if (typeof result.reportedTotal === 'number' && result.reportedTotal > result.achievements.length) {
+        hiddenCount = result.reportedTotal - result.achievements.length;
+    }
+    const hiddenLine =
+        text.match(/^\s*\+?(\d+)\s+hidden\s+achievements?\s+remaining/im) ||
+        text.match(/^\s*\+?(\d+)\s*[个個]?\s*(?:隐藏成就|隱藏成就)/im) ||
+        text.match(/^\+(\d+)\s*$/m);
+    if (hiddenLine) {
+        const explicit = parseInt(hiddenLine[1], 10);
+        if (!isNaN(explicit) && explicit > hiddenCount) hiddenCount = explicit;
+    }
+    if (hiddenCount > 0) {
+        const startIdx = result.achievements.length;
+        for (let i = 0; i < hiddenCount; i++) {
+            const label = hiddenCount === 1
+                ? 'Hidden Achievement'
+                : `Hidden Achievement (${i + 1} of ${hiddenCount})`;
+            const rec = buildAchievementRecord(
+                label,
+                'Details revealed once you unlock this achievement in-game.',
+                0,
+                startIdx + i,
+                result
+            );
+            rec.isHidden = true;
+            rec.icon = '🔒';
+            rec.rarity = 'epic'; // Hidden achievements tend to be rare.
+            result.achievements.push(rec);
+        }
+    }
+    result.hiddenCount = hiddenCount;
 
     return result;
 }
@@ -1027,16 +1062,15 @@ function updateAddGamePreview(parsed) {
         el.textContent = '';
         return;
     }
-    const parts = [`Found ${parsed.achievements.length} achievement${parsed.achievements.length === 1 ? '' : 's'}`];
+    const total = parsed.achievements.length;
+    const parts = [`Found ${total} achievement${total === 1 ? '' : 's'}`];
     if (parsed.gameName) parts.push(`for "${parsed.gameName}"`);
     if (parsed.appId) parts.push(`(App ID ${parsed.appId})`);
     let msg = parts.join(' ') + '.';
-    // Transparency: if Steam's count line disagrees with what we parsed,
-    // the delta is almost certainly hidden achievements not present in
-    // the pasted text. Tell the user honestly.
-    if (typeof parsed.reportedTotal === 'number' && parsed.reportedTotal > parsed.achievements.length) {
-        const missing = parsed.reportedTotal - parsed.achievements.length;
-        msg += ` Steam page says ${parsed.reportedTotal} total — ${missing} hidden achievement${missing === 1 ? '' : 's'} will appear once you unlock them.`;
+    const unlocked = parsed.achievements.filter(a => a.achieved).length;
+    if (unlocked > 0) msg += ` ${unlocked} already unlocked.`;
+    if (parsed.hiddenCount > 0) {
+        msg += ` ${parsed.hiddenCount} hidden — locked rows added as placeholders; names will need a manual re-add after you unlock them in-game.`;
     }
     msg += ' Review below and click Add.';
     el.textContent = msg;
