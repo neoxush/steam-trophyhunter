@@ -38,9 +38,15 @@ A lightweight HTML toolkit for tracking and hunting Steam achievements across mu
 
 ### Adding Games
 1. Click the `➕` button in the navigation
-2. Enter the Steam App ID (e.g., `2499860` for Helldivers 2)
-3. Enter the game name
-4. Click "Add" to fetch all achievements
+2. Paste a Steam achievements URL (`steamcommunity.com/stats/<AppID>/achievements`),
+   the page content itself (Ctrl+A · Ctrl+C on the achievements page),
+   or view-source HTML — the parser auto-detects.
+3. Review the auto-filled preview and click **Add**.
+
+Steam's achievements page hides some entries until you unlock them. If the
+paste's `N of M` count line disagrees with the extracted list, the app tells
+you honestly how many hidden entries are missing — they'll appear on re-sync
+after you unlock them.
 
 ### Syncing Progress
 1. Go to your Steam Achievements page for the game

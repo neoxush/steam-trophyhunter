@@ -38,7 +38,7 @@
                 title="Delete Current Game">🗑️</button>
             <button id="syncProgressBtn" class="btn-nav hidden" onclick="showSyncModal()"
                 title="Pasteboard Sync (Mark Done Achievements)">📋</button>
-            <input type="text" id="searchInput" placeholder="Search a trophy or paste with your Steam trophy list">
+            <input type="text" id="searchInput" placeholder="Search a trophy — or paste a Steam URL / page content to add or sync a game">
             <select id="filterSelect">
                 <option value="all">All</option>
                 <option value="incomplete">Incomplete</option>
@@ -66,35 +66,24 @@
         <div class="modal-content">
             <h3>Add Game</h3>
 
-            <!-- Primary path: bookmarklet. One drag = permanent shortcut. -->
-            <div class="bookmarklet-box">
-                <p class="modal-subtitle" style="margin-bottom: 10px;">
-                    <strong>Fastest way</strong> — drag the button below to your bookmarks bar (once).
-                    Then, on any Steam achievements page, click it → come back here → paste.
-                </p>
-                <div class="bookmarklet-drag">
-                    <a id="bookmarkletLink" href="#" class="bookmarklet-btn"
-                        onclick="return false;"
-                        title="Drag me to your bookmarks bar">🏆 Grab Steam Achievements</a>
-                    <span class="bookmarklet-hint">↑ drag to bookmarks bar</span>
-                </div>
-            </div>
-
-            <!-- Secondary path: paste textarea. Accepts URL, bookmarklet
-                 JSON, plain Ctrl+A text, or view-source HTML. -->
-            <div class="field-group" style="margin-top: 14px;">
+            <!-- Primary path: paste anything Steam. Accepts URL (auto-fetch),
+                 Ctrl+A text from Personal or Global achievements page, or
+                 view-source HTML. Parser auto-detects. -->
+            <div class="field-group">
                 <p class="modal-subtitle" style="margin: 0;">
-                    Or paste here. Accepts <strong>URL</strong> (we'll fetch),
-                    <strong>bookmarklet output</strong>, <strong>Ctrl+A text</strong>, or <strong>view-source HTML</strong>:
+                    Paste a Steam achievements <strong>URL</strong>, or the
+                    <strong>page content</strong> (Ctrl+A / Ctrl+C on the
+                    achievements page), or <strong>view-source HTML</strong>.
+                    We'll figure it out.
                 </p>
-                <textarea id="addGamePaste" rows="4"
-                    placeholder="Paste a Steam achievements URL, OR bookmarklet output, OR Ctrl+A text, OR view-source HTML..."></textarea>
+                <textarea id="addGamePaste" rows="6"
+                    placeholder="e.g. https://steamcommunity.com/stats/&lt;AppID&gt;/achievements&#10;   or paste the page content directly..."></textarea>
                 <div id="addGamePreview" class="info-box hidden"></div>
             </div>
 
             <details class="add-game-manual">
                 <summary>Fallback: enter App ID and Name manually (auto-fetch via CORS proxy — often unreliable)</summary>
-                <input type="text" id="appIdInput" placeholder="App ID (e.g., 219990)">
+                <input type="text" id="appIdInput" placeholder="App ID (numeric)">
                 <input type="text" id="gameNameInput" placeholder="Game Name">
             </details>
 

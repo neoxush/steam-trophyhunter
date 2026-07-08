@@ -18,7 +18,6 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAiPreference(); // Restore AI settings
         setupEventListeners();
         initializeTheme();
-        installBookmarkletHref();
 
         // Final sync of the UI state
         updateUI();
@@ -60,17 +59,58 @@ function handleFilter(event) {
     applyFilters(query);
 }
 
-// Paste Handler for Search Bar (Smart Sync Detection)
+// Paste Handler for Search Bar (Smart Sync + Add-Game Detection).
+// The search bar is the "paste anything" surface. We inspect the paste and
+// route it to the right modal:
+//   - Steam URL alone                → Add Game (auto-fetch kicks in)
+//   - Steam page for a NEW game      → Add Game (with paste pre-filled)
+//   - Steam page for an EXISTING game → Sync
+//   - JSON blob                      → Sync (import path)
+//   - Anything shorter/other         → let the search filter handle it.
 function handleSearchPaste(event) {
     const pastedText = (event.clipboardData || window.clipboardData).getData('text');
+    if (!pastedText || pastedText.length < 30) return;
 
-    // Detect Steam Achievement list or JSON Data
+    const parsed = parseSteamAchievementsPaste(pastedText);
+
+    if (parsed.isUrlOnly && parsed.appId) {
+        event.preventDefault();
+        openAddGameWithPaste(pastedText);
+        return;
+    }
+
+    if (parsed.achievements.length > 0 && parsed.gameName) {
+        const alreadyTracked = achievements.some(a => a.game === parsed.gameName);
+        event.preventDefault();
+        if (alreadyTracked) {
+            showSyncModal(pastedText);
+        } else {
+            openAddGameWithPaste(pastedText);
+        }
+        return;
+    }
+
+    // Legacy heuristic — big text that looks Steam-ish or JSON-ish.
+    const trimmed = pastedText.trim();
     const isSteamText = pastedText.length > 300 && (pastedText.includes('Unlocked') || pastedText.includes('earned') || pastedText.includes('@'));
-    const isJson = (pastedText.trim().startsWith('[') || pastedText.trim().startsWith('{')) && pastedText.length > 50;
-
+    const isJson = (trimmed.startsWith('[') || trimmed.startsWith('{')) && pastedText.length > 50;
     if (isSteamText || isJson) {
-        event.preventDefault(); // Don't put the huge text in the search box
+        event.preventDefault();
         showSyncModal(pastedText);
+    }
+}
+
+// Open Add Game and populate the paste box with the given text. Fires an
+// `input` event so the existing parse-preview-autofill pipeline runs.
+function openAddGameWithPaste(text) {
+    showAddGameModal();
+    const pasteEl = document.getElementById('addGamePaste');
+    if (!pasteEl) return;
+    pasteEl.value = text;
+    try {
+        pasteEl.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch (_) {
+        handleAddGamePasteInput({ target: pasteEl });
     }
 }
 
@@ -193,306 +233,7 @@ function renderGameTabs() {
     }
 }
 
-// Load Demo Data with more games
-function loadDemoData() {
-    achievements = [
-        // Portal 2
-        {
-            id: '1',
-            name: 'Heartbreaker',
-            description: 'Complete the game in co-op mode',
-            icon: '🏆',
-            achieved: false,
-            progress: 60,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 12.5,
-            rarity: 'rare',
-            game: 'Portal 2',
-            gameIcon: '🏆'
-        },
-        {
-            id: '2',
-            name: 'Still Alive',
-            description: 'Complete the game',
-            icon: '🏆',
-            achieved: true,
-            progress: 100,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: 78.3,
-            rarity: 'common',
-            game: 'Portal 2',
-            gameIcon: '🏆'
-        },
-        {
-            id: '3',
-            name: 'Professor Portal',
-            description: 'Complete all test chambers',
-            icon: '🏆',
-            achieved: false,
-            progress: 75,
-            priority: 'medium',
-            favorite: true,
-            globalPercentage: 45.2,
-            rarity: 'uncommon',
-            game: 'Portal 2',
-            gameIcon: '🏆'
-        },
-        {
-            id: '6',
-            name: 'Speed Runner',
-            description: 'Complete the game in under 2 hours',
-            icon: '🏆',
-            achieved: false,
-            progress: 0,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 3.2,
-            rarity: 'epic',
-            game: 'Portal 2',
-            gameIcon: '🏆'
-        },
-        {
-            id: '7',
-            name: 'Friendly Fire',
-            description: 'Complete co-op without killing your partner',
-            icon: '🏆',
-            achieved: true,
-            progress: 100,
-            priority: 'low',
-            favorite: false,
-            globalPercentage: 56.8,
-            rarity: 'common',
-            game: 'Portal 2',
-            gameIcon: '🏆'
-        },
 
-        // Half-Life 2
-        {
-            id: '4',
-            name: 'Lambda Locator',
-            description: 'Find all lambda caches',
-            icon: '🏆',
-            achieved: false,
-            progress: 18,
-            priority: 'low',
-            favorite: false,
-            globalPercentage: 23.1,
-            rarity: 'uncommon',
-            game: 'Half-Life 2',
-            gameIcon: '🏆'
-        },
-        {
-            id: '5',
-            name: 'Zombie Chopper',
-            description: 'Kill 1000 zombies with the gravity gun',
-            icon: '🏆',
-            achieved: false,
-            progress: 45,
-            priority: 'high',
-            favorite: false,
-            globalPercentage: 8.7,
-            rarity: 'rare',
-            game: 'Half-Life 2',
-            gameIcon: '🏆'
-        },
-        {
-            id: '9',
-            name: 'Gravity Master',
-            description: 'Kill 50 enemies with physics objects',
-            icon: '🏆',
-            achieved: true,
-            progress: 100,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: 42.3,
-            rarity: 'common',
-            game: 'Half-Life 2',
-            gameIcon: '🏆'
-        },
-
-        // Undertale
-        {
-            id: '8',
-            name: 'Pacifist',
-            description: 'Complete the game without killing anyone',
-            icon: '🏆',
-            achieved: false,
-            progress: 30,
-            priority: 'medium',
-            favorite: true,
-            globalPercentage: 15.4,
-            rarity: 'rare',
-            game: 'Undertale',
-            gameIcon: '🏆'
-        },
-        {
-            id: '10',
-            name: 'True Hero',
-            description: 'Get the true pacifist ending',
-            icon: '🏆',
-            achieved: false,
-            progress: 10,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 8.9,
-            rarity: 'rare',
-            game: 'Undertale',
-            gameIcon: '🏆'
-        },
-        {
-            id: '11',
-            name: 'Determined',
-            description: 'Die 100 times',
-            icon: '🏆',
-            achieved: true,
-            progress: 100,
-            priority: 'low',
-            favorite: false,
-            globalPercentage: 67.2,
-            rarity: 'common',
-            game: 'Undertale',
-            gameIcon: '🏆'
-        },
-
-        // Terraria
-        {
-            id: '12',
-            name: 'Eye on You',
-            description: 'Defeat the Eye of Cthulhu',
-            icon: '🏆',
-            achieved: true,
-            progress: 100,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: 82.5,
-            rarity: 'common',
-            game: 'Terraria',
-            gameIcon: '🏆'
-        },
-        {
-            id: '13',
-            name: 'Slayer of Worlds',
-            description: 'Defeat every boss',
-            icon: '🏆',
-            achieved: false,
-            progress: 35,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 5.2,
-            rarity: 'epic',
-            game: 'Terraria',
-            gameIcon: '🏆'
-        },
-        {
-            id: '14',
-            name: 'Home Sweet Home',
-            description: 'Build a house for every NPC',
-            icon: '🏆',
-            achieved: false,
-            progress: 60,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: 28.7,
-            rarity: 'uncommon',
-            game: 'Terraria',
-            gameIcon: '🏆'
-        },
-
-        // Elden Ring (Real Steam Achievements)
-        {
-            id: '15',
-            name: 'Elden Lord',
-            description: 'Achieve the "Elden Lord" ending',
-            icon: '🏆',
-            achieved: false,
-            progress: 0,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 28.4,
-            rarity: 'uncommon',
-            game: 'Elden Ring',
-            gameIcon: '🏆'
-        },
-        {
-            id: '16',
-            name: 'Shardbearer Godrick',
-            description: 'Defeated Shardbearer Godrick',
-            icon: '🏆',
-            achieved: true,
-            progress: 100,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: 67.8,
-            rarity: 'common',
-            game: 'Elden Ring',
-            gameIcon: '🏆'
-        },
-        {
-            id: '17',
-            name: 'Shardbearer Malenia',
-            description: 'Defeated Shardbearer Malenia',
-            icon: '🏆',
-            achieved: false,
-            progress: 15,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 34.2,
-            rarity: 'uncommon',
-            game: 'Elden Ring',
-            gameIcon: '🏆'
-        },
-        {
-            id: '18',
-            name: 'Legendary Armaments',
-            description: 'Acquired all legendary armaments',
-            icon: '🏆',
-            achieved: false,
-            progress: 40,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: 8.9,
-            rarity: 'rare',
-            game: 'Elden Ring',
-            gameIcon: '🏆'
-        },
-        {
-            id: '19',
-            name: 'Legendary Ashen Remains',
-            description: 'Acquired all legendary ashen remains',
-            icon: '🏆',
-            achieved: false,
-            progress: 25,
-            priority: 'low',
-            favorite: false,
-            globalPercentage: 6.7,
-            rarity: 'rare',
-            game: 'Elden Ring',
-            gameIcon: '🏆'
-        },
-        {
-            id: '20',
-            name: 'Age of the Stars',
-            description: 'Achieved the "Age of the Stars" ending',
-            icon: '🏆',
-            achieved: false,
-            progress: 0,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 19.3,
-            rarity: 'uncommon',
-            game: 'Elden Ring',
-            gameIcon: '🏆'
-        }
-    ];
-
-    filteredAchievements = [...achievements];
-    currentGame = 'all';
-    saveAchievements();
-    updateUI();
-    showNotification('Sample data loaded for testing.', 'success');
-}
 
 // Render Achievements
 function renderAchievements() {
@@ -909,7 +650,15 @@ async function submitAddGame() {
             saveAchievements();
             updateUI();
             closeAddGameModal();
-            showNotification(`Added ${gameName} with ${realAchievements.length} achievements!`, 'success');
+            let msg = `Added ${gameName} with ${realAchievements.length} achievements!`;
+            // If Steam reported a higher total than we could parse, be honest
+            // about the delta — those are almost certainly hidden achievements.
+            if (addGamePasteResult && typeof addGamePasteResult.reportedTotal === 'number'
+                && addGamePasteResult.reportedTotal > realAchievements.length) {
+                const missing = addGamePasteResult.reportedTotal - realAchievements.length;
+                msg += ` (${missing} hidden — they'll appear once unlocked.)`;
+            }
+            showNotification(msg, 'success');
         } else {
             throw new Error('No achievements were found in the paste or from Steam.');
         }
@@ -994,38 +743,20 @@ async function autoFetchFromUrl(appId, url) {
 }
 
 function parseSteamAchievementsPaste(text) {
-    const result = { appId: null, gameName: null, achievements: [], isUrlOnly: false };
-
-    const trimmed = text.trim();
-
-    // 0. Bookmarklet output — signed JSON. Trusted structured data.
-    if (trimmed.startsWith('{') && trimmed.includes('"_sth"')) {
-        try {
-            const parsed = JSON.parse(trimmed);
-            if (parsed && parsed._sth === 1 && Array.isArray(parsed.achievements)) {
-                result.appId = parsed.appId || null;
-                result.gameName = parsed.gameName || null;
-                parsed.achievements.forEach((a, i) => {
-                    result.achievements.push(buildAchievementRecord(
-                        a.name || `Achievement ${i + 1}`,
-                        a.description || '',
-                        typeof a.percent === 'number' ? a.percent : 0,
-                        i, result
-                    ));
-                });
-                return result;
-            }
-        } catch (err) {
-            console.warn('[Add Game] Signed JSON parse failed, falling through:', err);
-        }
-    }
+    const result = {
+        appId: null,
+        gameName: null,
+        achievements: [],
+        isUrlOnly: false,
+        reportedTotal: null,   // From "N of M" count line, if present
+        reportedEarned: null,  // From "N of M" count line, if present
+    };
 
     // 1. App ID from any Steam URL present in the paste.
     const urlMatch = text.match(/(?:steamcommunity\.com\/(?:stats|id\/[^/]+\/stats|profiles\/\d+\/stats)\/(\d+)|store\.steampowered\.com\/app\/(\d+))/i);
     if (urlMatch) result.appId = urlMatch[1] || urlMatch[2];
 
     // 1b. URL-only paste — no meaningful content besides the URL.
-    // Caller uses this signal to auto-fetch via CORS proxies.
     if (result.appId && /^\s*https?:\/\/\S+\s*$/.test(text)) {
         result.isUrlOnly = true;
         return result;
@@ -1046,37 +777,45 @@ function parseSteamAchievementsPaste(text) {
     }
 
     // 3. Plain text paths — handles both the Personal Achievements view
-    //    (has "Unlocked <date>" lines, no percentages) and the Global
-    //    Achievements view (has NN.N% lines, no unlock dates).
+    //    (has unlock-date lines, no percentages) and the Global Achievements
+    //    view (has percentage lines). Locale-agnostic where possible.
     //
-    // Game name resolution — try patterns in order:
-    //   a. "<User> » Games » <GameName> Stats"  (Personal view breadcrumb)
-    //   b. "<GameName> > Global Achievements"   (Global view header)
-    //   c. "<GameName> > Achievements"          (older header form)
+    // Game name resolution — universal `»` breadcrumb (works in every locale)
+    // with a locale-specific "Stats" suffix stripped. Fallback: English
+    // "<Name> > Global Achievements" header form.
     if (!result.gameName) {
-        const mA = text.match(/»\s*Games\s*»\s*(.+?)\s*Stats\b/i);
-        if (mA) result.gameName = mA[1].trim();
+        result.gameName = extractGameNameFromBreadcrumb(text);
     }
     if (!result.gameName) {
         const mB = text.match(/^\s*([^\n>·|]{1,80})\s*[>·]\s*(?:Global\s+)?Achievements?\b/im);
         if (mB) result.gameName = mB[1].trim();
     }
 
-    // Achievement extraction — two-strategy attempt:
-    //   Strategy G (Global view): line-anchored on percentages.
-    //   Strategy P (Personal view): block-anchored on blank-line separators,
-    //     with "Unlocked <date>" marking achieved rows.
+    // Count line — "N of M (X%) achievements earned" (English) or
+    // "已获得 N / M (X%) 个成就" (Chinese) or similar. We use this as the
+    // authoritative total from Steam so we can honestly report the delta
+    // between what was in the paste and what Steam claims exists.
+    const countM = text.match(/\b(\d+)\s*(?:of|\/)\s*(\d+)\s*\(\s*\d+\s*%\s*\)\s*achievements?\s+earned/i)
+        || text.match(/已?获得\s*(\d+)\s*\/\s*(\d+)\s*\(\s*\d+\s*%\s*\)\s*[个個]?\s*成就/);
+    if (countM) {
+        result.reportedEarned = parseInt(countM[1], 10);
+        result.reportedTotal = parseInt(countM[2], 10);
+    }
+
     // Guard: only proceed if the paste looks like a Steam achievements page.
-    // Prevents random text from being misparsed as achievements.
+    // Locale-aware — accepts English/Chinese keywords plus universal
+    // structural signals (breadcrumb, percentages, unlock-date lines).
     const looksLikeSteam =
         /\bachievements?\s+earned\b/i.test(text) ||
         /\b(personal|global)\s+achievements\b/i.test(text) ||
-        /^\s*(unlocked|earned)\s+\d/im.test(text) ||
-        /^\s*\d+(?:\.\d+)?\s*%\s*$/m.test(text) ||
-        /»\s*Games\s*»/i.test(text);
+        /(个人成就|個人成就|全球成就|已获得\s*\d+.*成就|个成就|個成就)/.test(text) ||
+        /»\s*(Games?|游戏|遊戲)\s*»/i.test(text) ||
+        UNLOCK_KEYWORDS.test(text) ||
+        /^\s*\d+(?:\.\d+)?\s*%\s*$/m.test(text);
     if (!looksLikeSteam) {
         return result;
     }
+
     const globalRows = extractPlainTextGlobal(text, result);
     const personalRows = extractPlainTextPersonal(text, result);
     // Whichever strategy found more rows wins. If tied, prefer Personal
@@ -1084,6 +823,49 @@ function parseSteamAchievementsPaste(text) {
     result.achievements = personalRows.length >= globalRows.length ? personalRows : globalRows;
 
     return result;
+}
+
+// Universal breadcrumb parser. Steam breadcrumbs are separated by `»` in
+// every locale. Take the last segment and strip a locale-specific "Stats"
+// suffix. Works for:
+//   English: "<User> » Games » <GameName> Stats"       → "<GameName>"
+//   Chinese: "<User> » 游戏 » <GameName> 统计信息"     → "<GameName>"
+//   Otherwise: returns the last segment as-is.
+function extractGameNameFromBreadcrumb(text) {
+    const lines = text.split(/\r?\n/);
+    const STATS_SUFFIX = /\s*(Stats|Statistics|Statistiken|Statistiques|Statistiche|Estad[íi]sticas|Estat[íi]sticas|Статистика|统计信息|統計信息|统计|統計|統計情報|통계|統計データ)\s*$/i;
+    for (const line of lines) {
+        if (!line.includes('»')) continue;
+        const parts = line.split('»').map(s => s.trim()).filter(Boolean);
+        if (parts.length < 2) continue;
+        let candidate = parts[parts.length - 1];
+        candidate = candidate.replace(STATS_SUFFIX, '').trim();
+        if (candidate.length >= 1 && candidate.length <= 80) return candidate;
+    }
+    return null;
+}
+
+// Recognize the "Unlocked <date>" line in any locale.
+//   1. Explicit keyword list (extensible), OR
+//   2. Universal fallback: line has TWO OR MORE of { @-marker, HH:MM time,
+//      4-digit year } — sufficient to identify a datestamp in almost any
+//      locale, without relying on translated verbs.
+const UNLOCK_KEYWORDS = new RegExp(
+    "^\\s*(" +
+    "unlocked|earned|" +
+    "已解锁|已解鎖|解锁于|解鎖於|获得于|獲得於|获得|獲得|已获得|" +
+    "d[ée]bloqu[ée]|freigeschaltet|desbloqueado[a]?|desbloqueada|sbloccato|conquistato|" +
+    "ロック解除|解除済み|해제됨|해제|разблокировано|получено" +
+    ")\\b", 'i'
+);
+function looksLikeUnlockLine(line) {
+    if (!line) return false;
+    if (UNLOCK_KEYWORDS.test(line)) return true;
+    let hits = 0;
+    if (/@/.test(line)) hits++;
+    if (/\d{1,2}:\d{2}/.test(line)) hits++;
+    if (/(?<!\d)(?:19|20)\d{2}(?!\d)/.test(line)) hits++;
+    return hits >= 2;
 }
 
 // Strategy G — Global Achievements view: anchor on lines like "78.4%".
@@ -1097,7 +879,7 @@ function extractPlainTextGlobal(text, ctx) {
         const m = lines[i].match(pctRegex);
         if (!m) continue;
         let cursor = i - 1;
-        while (cursor >= 0 && /^(unlocked|earned)\b/i.test(lines[cursor])) cursor--;
+        while (cursor >= 0 && looksLikeUnlockLine(lines[cursor])) cursor--;
         while (cursor >= 0 && !lines[cursor]) cursor--;
         const descOrName = cursor >= 0 ? lines[cursor--] : '';
         while (cursor >= 0 && !lines[cursor]) cursor--;
@@ -1121,18 +903,21 @@ function extractPlainTextGlobal(text, ctx) {
 //   [Name]                  [Name]              [Name]
 //   [Description]           [Description]
 //   Unlocked <date>         Unlocked <date>
-// A block is achieved iff it contains an "Unlocked <date>" line.
+// A block is achieved iff it contains a date-looking line (locale-agnostic).
 function extractPlainTextPersonal(text, ctx) {
     const lines = text.split(/\r?\n/).map(l => l.trim());
 
-    // Find the achievement region — skip page nav/header before the count line
-    // "N of M (X%) achievements earned:" and stop at the footer copyright line.
+    // Region anchor — skip page nav/header before the count line and stop
+    // at the footer copyright. Matches English or Chinese count phrasing.
     let start = 0, end = lines.length;
     for (let i = 0; i < lines.length; i++) {
-        if (/achievements\s+earned/i.test(lines[i])) { start = i + 1; break; }
+        if (/achievements\s+earned/i.test(lines[i]) ||
+            /[个個]\s*成就|已获得.*成就|已獲得.*成就/.test(lines[i])) {
+            start = i + 1; break;
+        }
     }
     for (let i = end - 1; i >= start; i--) {
-        if (/©\s*\d{4}\s*Valve|VAT\s+included|All\s+trademarks\s+are\s+property/i.test(lines[i])) {
+        if (/©\s*\d{4}\s*Valve|VAT\s+included|All\s+trademarks\s+are\s+property|Valve\s*(公司|Corporation)/i.test(lines[i])) {
             end = i; break;
         }
     }
@@ -1153,16 +938,13 @@ function extractPlainTextPersonal(text, ctx) {
     const out = [];
     let idx = 0;
     for (const block of blocks) {
-        // Filter block-level noise (section headers, hidden-count lines, etc.)
         if (block.length === 1 && isSectionHeaderOrCounter(block[0])) continue;
         if (block.every(l => isNoiseLine(l))) continue;
 
-        // Extract achieved status
-        let achievedIdx = block.findIndex(l => /^(unlocked|earned)\b/i.test(l));
-        const achieved = achievedIdx !== -1;
+        const unlockIdx = block.findIndex(l => looksLikeUnlockLine(l));
+        const achieved = unlockIdx !== -1;
 
-        // Strip the Unlocked line to leave name + optional description
-        const meat = block.filter((_, k) => k !== achievedIdx).filter(l => !isNoiseLine(l));
+        const meat = block.filter((_, k) => k !== unlockIdx).filter(l => !isNoiseLine(l));
         if (meat.length === 0) continue;
 
         const name = meat[0];
@@ -1179,25 +961,35 @@ function extractPlainTextPersonal(text, ctx) {
     return out;
 }
 
-// Line-level noise: Steam nav chrome, one-line meta strings.
+// Line-level noise: Steam nav chrome, one-line meta strings. Multi-locale.
 function isNoiseLine(l) {
     if (!l) return true;
-    if (/^(steam|store|community|about|support|install\s+steam|login|language|profile|badges|inventory|screenshots|videos|workshop|reviews|guides|artwork|broadcasts|friends|groups|about\s+steam|jobs|hardware|recycling|privacy|accessibility|cookies|refunds|get\s+steam|get\s+mobile\s+apps|get\s+support|my\s+account|steam\s+ssa|steamworks|steam\s+distribution|gift\s+cards|about\s+valve|notices\s+&\s+policies|legal|valve|more)$/i.test(l)) return true;
-    if (/^(personal\s+achievements|global\s+achievements|view\s+global\s+achievement\s+stats|% of all players|view\s+achievements|view\s+details)$/i.test(l)) return true;
+    // English nav / footer sections
+    if (/^(steam|store|community|about|support|install\s+steam|login|language|profile|badges|inventory|screenshots|videos|workshop|reviews|guides|artwork|broadcasts|friends|groups|about\s+steam|jobs|hardware|recycling|privacy|accessibility|cookies|refunds|get\s+steam|get\s+mobile\s+apps|get\s+support|my\s+account|steam\s+ssa|steamworks|steam\s+distribution|gift\s+cards|about\s+valve|notices\s+&\s+policies|legal|valve|more|chat)$/i.test(l)) return true;
+    if (/^(personal\s+achievements|global\s+achievements|view\s+global\s+achievement\s+stats|% of all players|view\s+achievements|view\s+details|link\s+to\s+the\s+steam\s+homepage)$/i.test(l)) return true;
     if (/^hidden achievement\.?$/i.test(l)) return true;
     if (/^details for each achievement will be revealed once unlocked$/i.test(l)) return true;
-    if (/^\+\d+$/.test(l)) return true;                          // "+26"
+    if (/^\+\d+$/.test(l)) return true;
     if (/^\d+\s+hidden\s+achievements?\s+remaining/i.test(l)) return true;
     if (/^\d+\s+of\s+\d+\s+\(\d+%\)\s+achievements\s+earned/i.test(l)) return true;
-    if (/^playtime\s+past/i.test(l)) return true;                // "Playtime past 2 weeks: 1.3h"
-    if (/^¥\s*\d/.test(l)) return true;                          // wallet balance
+    if (/^playtime\s+past/i.test(l)) return true;
+    if (/^[¥$€£]\s*\d/.test(l)) return true;
+    // Chinese nav / footer / meta lines
+    if (/^(商店|社区|社群|支持|个人资料|個人資料|库|庫|徽章|库存|庫存|截图|截圖|视频|視頻|创意工坊|創意工坊|评测|評測|指南|艺术作品|藝術作品|直播|好友|群组|群組|个人成就|個人成就|全球成就|安装\s*Steam|安裝\s*Steam|登录|登入|语言|語言|获取\s*Steam|獲取\s*Steam|获取移动应用|獲取移動應用|帮助|說明|我的账户|我的帳戶|关于\s*Steam|關於\s*Steam|关于\s*Valve|關於\s*Valve|工作|硬件|硬體|回收|隐私|隱私|辅助功能|輔助功能|Cookies|退款|法律|礼品卡|禮品卡|Steamworks|Steam\s*分发|Steam\s*分發|更多|Chat|聊天|Neo.*Chat)$/i.test(l)) return true;
+    if (/^隐藏成就\.?$|^隱藏成就\.?$/.test(l)) return true;
+    if (/^还有?\s*\d+\s*[个個]?\s*隐藏成就|^還有?\s*\d+\s*[个個]?\s*隱藏成就/.test(l)) return true;
+    if (/^已?获得?\s*\d+\s*[\/]?\s*\d+\s*\(\d+%\)\s*[个個]?\s*成就/.test(l)) return true;
+    if (/^查看全球成就统计|^查看全球成就統計/.test(l)) return true;
+    if (/^解锁后.*详细信息|^解鎖後.*詳細信息/.test(l)) return true;
+    if (/^所有玩家.*百分比|^%\s*所有玩家/.test(l)) return true;
+    if (/^最近两周游戏时间|^最近兩週遊戲時間/.test(l)) return true;
     return false;
 }
 
 // Block-level: single-line strings that are clearly not achievement names.
 function isSectionHeaderOrCounter(l) {
     if (isNoiseLine(l)) return true;
-    if (/»\s*Games\s*»/i.test(l)) return true;                    // breadcrumb
+    if (/»\s*(Games?|游戏|遊戲)\s*»/i.test(l)) return true;
     if (/^Link to the Steam Homepage/i.test(l)) return true;
     if (/^©\s*\d{4}/i.test(l)) return true;
     return false;
@@ -1238,45 +1030,22 @@ function updateAddGamePreview(parsed) {
     const parts = [`Found ${parsed.achievements.length} achievement${parsed.achievements.length === 1 ? '' : 's'}`];
     if (parsed.gameName) parts.push(`for "${parsed.gameName}"`);
     if (parsed.appId) parts.push(`(App ID ${parsed.appId})`);
-    el.textContent = parts.join(' ') + '. Review the fields below and click Add.';
+    let msg = parts.join(' ') + '.';
+    // Transparency: if Steam's count line disagrees with what we parsed,
+    // the delta is almost certainly hidden achievements not present in
+    // the pasted text. Tell the user honestly.
+    if (typeof parsed.reportedTotal === 'number' && parsed.reportedTotal > parsed.achievements.length) {
+        const missing = parsed.reportedTotal - parsed.achievements.length;
+        msg += ` Steam page says ${parsed.reportedTotal} total — ${missing} hidden achievement${missing === 1 ? '' : 's'} will appear once you unlock them.`;
+    }
+    msg += ' Review below and click Add.';
+    el.textContent = msg;
     el.classList.remove('hidden');
 }
 
 function hideAddGamePreview() {
     const el = document.getElementById('addGamePreview');
     if (el) el.classList.add('hidden');
-}
-
-// --- Bookmarklet ---
-// Runs in the Steam page's own context (so no CORS, no proxy). Reads
-// achievement rows via the same DOM selectors the old fetch-parser used,
-// signs the JSON with { _sth: 1 } so our paste parser recognizes it as
-// trusted structured data, and copies it to the clipboard. If the modern
-// Clipboard API is blocked, falls back to document.execCommand('copy')
-// on a hidden textarea, and finally to a prompt() the user can copy
-// out of manually.
-function buildBookmarkletSource() {
-    // Keep this as one physical string — it becomes a javascript: URL. Any
-    // future edits must remain valid without newlines in the URL-encoded form.
-    return "(function(){try{var rows=document.querySelectorAll('.achieveRow');"
-        + "if(!rows.length){alert('No achievements found. Go to a Steam achievements page like https://steamcommunity.com/stats/<AppID>/achievements first.');return;}"
-        + "var m=location.pathname.match(/\\/stats\\/(\\d+)\\//);var appId=m?m[1]:null;"
-        + "var name=null;var ts=[document.querySelector('.gameLogo a'),document.querySelector('.apphub_AppName'),document.querySelector('.profile_small_header_name'),document.querySelector('.pageheader')];"
-        + "for(var i=0;i<ts.length;i++){if(ts[i]&&ts[i].textContent){name=ts[i].textContent.trim();break;}}"
-        + "if(!name){name=document.title.replace(/^Steam\\s*Community\\s*::\\s*/i,'').replace(/\\s*::.*$/,'').trim();}"
-        + "var ach=[];rows.forEach(function(r,i){var n=r.querySelector('h3');var d=r.querySelector('h5');var p=r.querySelector('.achievePercent');var pct=0;if(p){pct=parseFloat(p.textContent.trim().replace('%',''))||0;}"
-        + "ach.push({name:n?n.textContent.trim():'Achievement '+(i+1),description:d?d.textContent.trim():'',percent:pct});});"
-        + "var payload={_sth:1,appId:appId,gameName:name,achievements:ach};var json=JSON.stringify(payload);"
-        + "var done=function(ok){if(ok){alert('Copied '+ach.length+' achievements for \"'+(name||'Unknown')+'\" (App ID '+(appId||'?')+').\\n\\nGo to Trophy Hunter -> Add Game -> paste in the box.');}else{prompt('Copy this JSON and paste it into Trophy Hunter:',json);}};"
-        + "if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(json).then(function(){done(true);},function(){var t=document.createElement('textarea');t.value=json;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();var ok=false;try{ok=document.execCommand('copy');}catch(e){}document.body.removeChild(t);done(ok);});}"
-        + "else{var t=document.createElement('textarea');t.value=json;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();var ok=false;try{ok=document.execCommand('copy');}catch(e){}document.body.removeChild(t);done(ok);}"
-        + "}catch(err){alert('Bookmarklet error: '+err.message);}})();";
-}
-
-function installBookmarkletHref() {
-    const link = document.getElementById('bookmarkletLink');
-    if (!link) return;
-    link.href = 'javascript:' + encodeURIComponent(buildBookmarkletSource());
 }
 
 // Fetch REAL achievements from Steam Community page
@@ -1387,84 +1156,7 @@ function parseAchievementsHTML(html, appId) {
     return { gameName: ctx.gameName, achievements };
 }
 
-// Create sample achievements for a game
-function createAchievementsFromGameData(gameData, appId) {
-    // Since we can't get actual achievements without Steam Web API key,
-    // we'll create some sample achievements based on the game
-    const sampleAchievements = [
-        {
-            name: 'First Steps',
-            description: `Start playing ${gameData.name}`,
-            icon: '🏆',
-            achieved: false,
-            progress: 0,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: 95.0,
-            rarity: 'common'
-        },
-        {
-            name: 'Getting Started',
-            description: 'Complete the tutorial or first level',
-            icon: '🏆',
-            achieved: false,
-            progress: 0,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: 75.0,
-            rarity: 'common'
-        },
-        {
-            name: 'Dedicated Player',
-            description: 'Play for 10 hours',
-            icon: '🏆',
-            achieved: false,
-            progress: 0,
-            priority: 'low',
-            favorite: false,
-            globalPercentage: 45.0,
-            rarity: 'uncommon'
-        },
-        {
-            name: 'Master',
-            description: 'Complete all main objectives',
-            icon: '🏆',
-            achieved: false,
-            progress: 0,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 15.0,
-            rarity: 'rare'
-        },
-        {
-            name: 'Perfectionist',
-            description: 'Achieve 100% completion',
-            icon: '🏆',
-            achieved: false,
-            progress: 0,
-            priority: 'high',
-            favorite: true,
-            globalPercentage: 5.0,
-            rarity: 'epic'
-        }
-    ];
 
-    // Generate unique IDs and add game info
-    return sampleAchievements.map((ach, index) => ({
-        id: `${appId}_${index}`,
-        name: ach.name,
-        description: ach.description,
-        icon: ach.icon,
-        achieved: ach.achieved,
-        progress: ach.progress,
-        priority: ach.priority,
-        favorite: ach.favorite,
-        globalPercentage: ach.globalPercentage,
-        rarity: ach.rarity,
-        game: gameData.name,
-        gameIcon: '🏆'
-    }));
-}
 
 // Clear Data
 function clearData() {
