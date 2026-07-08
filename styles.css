@@ -1059,6 +1059,93 @@ body {
     background: var(--bg-primary);
 }
 
+/* Add Game modal — paste textarea needs more room than the default 80px
+ * because users paste a full Steam achievements page into it. */
+#addGamePaste {
+    min-height: 160px;
+    height: 160px;
+}
+
+/* Add Game modal — collapsible "manual" fallback block. Uses <details>
+ * so we don't add any JS for the toggle. */
+.add-game-manual {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+}
+.add-game-manual > summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    user-select: none;
+    outline: none;
+}
+.add-game-manual > summary:hover {
+    color: var(--text-primary);
+}
+.add-game-manual input[type="text"] {
+    margin-top: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+}
+.add-game-manual input[type="text"]:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+/* Add Game modal — bookmarklet drag surface. Meant to look like a
+ * tangible button you'd pull to your bookmarks bar. */
+.bookmarklet-box {
+    padding: 12px 14px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+}
+.bookmarklet-drag {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.bookmarklet-btn {
+    display: inline-block;
+    padding: 10px 16px;
+    background: var(--primary-color);
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 14px;
+    border-radius: var(--radius-md);
+    cursor: grab;
+    user-select: none;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.bookmarklet-btn:hover {
+    background: var(--primary-dark);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+.bookmarklet-btn:active {
+    cursor: grabbing;
+    transform: translateY(0);
+}
+.bookmarklet-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
 .btn-warning {
     background: var(--warning-color);
     color: white;

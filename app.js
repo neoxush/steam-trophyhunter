@@ -8,6 +8,7 @@ let currentGame = 'all'; // 'all' or specific game name
 let aiPreference = 'gemini'; // Default AI provider
 let guideLanguage = 'Chinese'; // Default language for AI guides
 let selectedAchievementId = null; // Track which achievement opened the modal
+let addGamePasteResult = null; // Parsed { appId, gameName, achievements } from Add Game paste box
 
 // Initialize App
 document.addEventListener('DOMContentLoaded', () => {
@@ -17,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAiPreference(); // Restore AI settings
         setupEventListeners();
         initializeTheme();
+        installBookmarkletHref();
 
         // Final sync of the UI state
         updateUI();
@@ -31,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function setupEventListeners() {
     const searchInput = document.getElementById('searchInput');
     const filterSelect = document.getElementById('filterSelect');
+    const addGamePaste = document.getElementById('addGamePaste');
 
     if (searchInput) {
         searchInput.addEventListener('input', handleSearch);
@@ -38,6 +41,9 @@ function setupEventListeners() {
     }
     if (filterSelect) {
         filterSelect.addEventListener('change', handleFilter);
+    }
+    if (addGamePaste) {
+        addGamePaste.addEventListener('input', handleAddGamePasteInput);
     }
 }
 
@@ -598,13 +604,17 @@ function showAddGameModal() {
     const modal = document.getElementById('addGameModal');
     const appIdInput = document.getElementById('appIdInput');
     const gameNameInput = document.getElementById('gameNameInput');
+    const pasteEl = document.getElementById('addGamePaste');
 
     if (modal) modal.classList.remove('hidden');
     if (appIdInput) appIdInput.value = '';
     if (gameNameInput) gameNameInput.value = '';
-    if (appIdInput) appIdInput.focus();
+    if (pasteEl) pasteEl.value = '';
+    addGamePasteResult = null;
+    hideAddGamePreview();
     hideAddGameError();
     hideAddGameLoading();
+    if (pasteEl) pasteEl.focus();
 }
 
 function closeAddGameModal() {
@@ -829,40 +839,41 @@ function handleJsonSync(jsonData, overwrite) {
 }
 
 // Add Game by App ID - Fetch REAL achievements from Steam
-async function addGameByAppId() {
+async function submitAddGame() {
     const appIdInput = document.getElementById('appIdInput');
     const gameNameInput = document.getElementById('gameNameInput');
     const addGameBtn = document.getElementById('addGameBtn');
 
-    const appId = appIdInput ? appIdInput.value.trim() : '';
-    const gameName = gameNameInput ? gameNameInput.value.trim() : '';
-
-    // Validation
-    if (!appId) {
-        showAddGameError('Please enter a Steam App ID');
-        return;
+    // Prefer manually-typed values; fall back to paste-parsed values.
+    let appId = appIdInput ? appIdInput.value.trim() : '';
+    let gameName = gameNameInput ? gameNameInput.value.trim() : '';
+    if (addGamePasteResult) {
+        if (!appId && addGamePasteResult.appId) appId = addGamePasteResult.appId;
+        if (!gameName && addGamePasteResult.gameName) gameName = addGamePasteResult.gameName;
     }
 
-    if (!/^\d+$/.test(appId)) {
+    // Validation
+    if (appId && !/^(custom_\d+|\d+)$/.test(appId)) {
         showAddGameError('App ID must be a number');
         return;
     }
-
     if (!gameName) {
-        showAddGameError('Please enter the game name');
+        showAddGameError('Enter a game name (or paste a Steam achievements page that includes the title).');
         return;
     }
+    // Paste-only flow may not have a real App ID — synthesize one so achievement
+    // IDs remain unique across localStorage. Users won't see this value.
+    if (!appId) {
+        appId = 'custom_' + Date.now();
+    }
 
-    // Check if game already exists (by name OR by app ID)
-    const existingGameByName = achievements.find(a => a.game === gameName);
-    if (existingGameByName) {
+    // Dedup: name-based and ID-based
+    if (achievements.find(a => a.game === gameName)) {
         showAddGameError(`Game "${gameName}" is already added!`);
         return;
     }
-
-    const existingGameByAppId = achievements.find(a => a.id && a.id.startsWith(appId + '_'));
-    if (existingGameByAppId) {
-        showAddGameError(`App ID ${appId} is already tracked as "${existingGameByAppId.game}"`);
+    if (achievements.find(a => a.id && a.id.startsWith(appId + '_'))) {
+        showAddGameError(`App ID ${appId} is already tracked as "${achievements.find(a => a.id && a.id.startsWith(appId + '_')).game}"`);
         return;
     }
 
@@ -871,26 +882,40 @@ async function addGameByAppId() {
     if (addGameBtn) addGameBtn.disabled = true;
 
     try {
-        // Try to fetch REAL achievements from Steam
-        console.log('Fetching real achievements from Steam...');
-        const realAchievements = await fetchRealSteamAchievements(appId, gameName);
+        let realAchievements = null;
+
+        // Path A: paste-parsed achievements (primary). Rebuild with the final
+        // appId/gameName the user confirmed so IDs and game tag are correct.
+        if (addGamePasteResult && addGamePasteResult.achievements.length > 0) {
+            realAchievements = addGamePasteResult.achievements.map((a, i) => ({
+                ...a,
+                id: `${appId}_${i}`,
+                game: gameName,
+            }));
+            console.log(`[Add Game] Using ${realAchievements.length} paste-parsed achievements.`);
+        }
+        // Path B: no paste — try the CORS-proxy fetch. May fail.
+        else {
+            if (appId.startsWith('custom_')) {
+                throw new Error('Nothing to add. Paste a Steam achievements page, or enter a numeric App ID to try the auto-fetch fallback.');
+            }
+            console.log('[Add Game] No paste — falling back to CORS-proxy fetch.');
+            realAchievements = await fetchRealSteamAchievements(appId, gameName);
+        }
 
         if (realAchievements && realAchievements.length > 0) {
-            // Add real achievements
             achievements = [...achievements, ...realAchievements];
             filteredAchievements = [...achievements];
-
             saveAchievements();
             updateUI();
             closeAddGameModal();
-            showNotification(`Added ${gameName} with ${realAchievements.length} REAL achievements from Steam!`, 'success');
+            showNotification(`Added ${gameName} with ${realAchievements.length} achievements!`, 'success');
         } else {
-            throw new Error('No achievements found');
+            throw new Error('No achievements were found in the paste or from Steam.');
         }
 
     } catch (error) {
         console.error('Add game error:', error);
-        // Show specific error message to help debugging
         showAddGameError(`Error: ${error.message || 'Unknown error occurred'}`);
     } finally {
         hideAddGameLoading();
@@ -898,119 +923,468 @@ async function addGameByAppId() {
     }
 }
 
+// --- Add Game paste parsing ---
+// Two accepted paste flavors:
+//   1) View-source HTML (contains <div class="achieveRow">…) — parsed with DOMParser
+//   2) Plain text from Ctrl+A on the rendered page — parsed line-by-line using
+//      the "…\nDescription\n[Unlocked date]\nXX.Y%" pattern Steam produces.
+
+function handleAddGamePasteInput(e) {
+    const text = e.target.value;
+    if (!text.trim()) {
+        addGamePasteResult = null;
+        hideAddGamePreview();
+        return;
+    }
+    const parsed = parseSteamAchievementsPaste(text);
+
+    // URL-only paste — auto-fetch via CORS proxies. On failure, open the
+    // page in a new tab so the user is already there for the bookmarklet.
+    if (parsed.isUrlOnly && parsed.appId) {
+        autoFetchFromUrl(parsed.appId, text.trim());
+        return;
+    }
+
+    addGamePasteResult = parsed;
+    updateAddGamePreview(parsed);
+
+    // Autofill manual fields only if user hasn't typed anything there yet.
+    const appIdInput = document.getElementById('appIdInput');
+    const gameNameInput = document.getElementById('gameNameInput');
+    if (parsed.appId && appIdInput && !appIdInput.value.trim()) appIdInput.value = parsed.appId;
+    if (parsed.gameName && gameNameInput && !gameNameInput.value.trim()) gameNameInput.value = parsed.gameName;
+}
+
+// Auto-fetch a Steam achievements page when the user pastes only a URL.
+// Silent success → preview populates like a normal paste.
+// Total failure → error message points at the bookmarklet, and we open
+// the page in a new tab so the user is one click away from clicking it.
+let _autoFetchInFlight = false;
+async function autoFetchFromUrl(appId, url) {
+    if (_autoFetchInFlight) return;
+    _autoFetchInFlight = true;
+
+    hideAddGameError();
+    showAddGameLoading();
+
+    try {
+        const list = await fetchRealSteamAchievements(appId, ''); // gameName resolved from HTML
+        // fetchRealSteamAchievements already stamped game name into each row.
+        const gameName = list[0] && list[0].game ? list[0].game : `Game ${appId}`;
+        addGamePasteResult = { appId, gameName, achievements: list, isUrlOnly: false };
+        updateAddGamePreview(addGamePasteResult);
+
+        // Autofill manual fields
+        const appIdInput = document.getElementById('appIdInput');
+        const gameNameInput = document.getElementById('gameNameInput');
+        if (appIdInput && !appIdInput.value.trim()) appIdInput.value = appId;
+        if (gameNameInput && !gameNameInput.value.trim()) gameNameInput.value = gameName;
+    } catch (err) {
+        console.warn('[Add Game] URL auto-fetch failed:', err);
+        addGamePasteResult = null;
+        hideAddGamePreview();
+        showAddGameError(
+            `Auto-fetch failed (${err.message}). Opening the page for you — click the "🏆 Grab Steam Achievements" bookmarklet on it, then paste the result back here.`
+        );
+        try { window.open(url, '_blank', 'noopener'); } catch (_) { /* ignore popup blocker */ }
+    } finally {
+        hideAddGameLoading();
+        _autoFetchInFlight = false;
+    }
+}
+
+function parseSteamAchievementsPaste(text) {
+    const result = { appId: null, gameName: null, achievements: [], isUrlOnly: false };
+
+    const trimmed = text.trim();
+
+    // 0. Bookmarklet output — signed JSON. Trusted structured data.
+    if (trimmed.startsWith('{') && trimmed.includes('"_sth"')) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && parsed._sth === 1 && Array.isArray(parsed.achievements)) {
+                result.appId = parsed.appId || null;
+                result.gameName = parsed.gameName || null;
+                parsed.achievements.forEach((a, i) => {
+                    result.achievements.push(buildAchievementRecord(
+                        a.name || `Achievement ${i + 1}`,
+                        a.description || '',
+                        typeof a.percent === 'number' ? a.percent : 0,
+                        i, result
+                    ));
+                });
+                return result;
+            }
+        } catch (err) {
+            console.warn('[Add Game] Signed JSON parse failed, falling through:', err);
+        }
+    }
+
+    // 1. App ID from any Steam URL present in the paste.
+    const urlMatch = text.match(/(?:steamcommunity\.com\/(?:stats|id\/[^/]+\/stats|profiles\/\d+\/stats)\/(\d+)|store\.steampowered\.com\/app\/(\d+))/i);
+    if (urlMatch) result.appId = urlMatch[1] || urlMatch[2];
+
+    // 1b. URL-only paste — no meaningful content besides the URL.
+    // Caller uses this signal to auto-fetch via CORS proxies.
+    if (result.appId && /^\s*https?:\/\/\S+\s*$/.test(text)) {
+        result.isUrlOnly = true;
+        return result;
+    }
+
+    // 2. HTML path — paste looks like view-source content.
+    if (text.includes('achieveRow') || /<html[\s>]/i.test(text)) {
+        try {
+            const htmlParsed = parseAchievementsHTML(text, result.appId);
+            if (htmlParsed.achievements.length > 0) {
+                if (htmlParsed.gameName) result.gameName = htmlParsed.gameName;
+                result.achievements = htmlParsed.achievements;
+                return result;
+            }
+        } catch (err) {
+            console.warn('[Add Game] HTML parse failed, falling back to text:', err);
+        }
+    }
+
+    // 3. Plain text paths — handles both the Personal Achievements view
+    //    (has "Unlocked <date>" lines, no percentages) and the Global
+    //    Achievements view (has NN.N% lines, no unlock dates).
+    //
+    // Game name resolution — try patterns in order:
+    //   a. "<User> » Games » <GameName> Stats"  (Personal view breadcrumb)
+    //   b. "<GameName> > Global Achievements"   (Global view header)
+    //   c. "<GameName> > Achievements"          (older header form)
+    if (!result.gameName) {
+        const mA = text.match(/»\s*Games\s*»\s*(.+?)\s*Stats\b/i);
+        if (mA) result.gameName = mA[1].trim();
+    }
+    if (!result.gameName) {
+        const mB = text.match(/^\s*([^\n>·|]{1,80})\s*[>·]\s*(?:Global\s+)?Achievements?\b/im);
+        if (mB) result.gameName = mB[1].trim();
+    }
+
+    // Achievement extraction — two-strategy attempt:
+    //   Strategy G (Global view): line-anchored on percentages.
+    //   Strategy P (Personal view): block-anchored on blank-line separators,
+    //     with "Unlocked <date>" marking achieved rows.
+    // Guard: only proceed if the paste looks like a Steam achievements page.
+    // Prevents random text from being misparsed as achievements.
+    const looksLikeSteam =
+        /\bachievements?\s+earned\b/i.test(text) ||
+        /\b(personal|global)\s+achievements\b/i.test(text) ||
+        /^\s*(unlocked|earned)\s+\d/im.test(text) ||
+        /^\s*\d+(?:\.\d+)?\s*%\s*$/m.test(text) ||
+        /»\s*Games\s*»/i.test(text);
+    if (!looksLikeSteam) {
+        return result;
+    }
+    const globalRows = extractPlainTextGlobal(text, result);
+    const personalRows = extractPlainTextPersonal(text, result);
+    // Whichever strategy found more rows wins. If tied, prefer Personal
+    // because it also carries achieved-status data.
+    result.achievements = personalRows.length >= globalRows.length ? personalRows : globalRows;
+
+    return result;
+}
+
+// Strategy G — Global Achievements view: anchor on lines like "78.4%".
+// Description sits directly above %; name sits above description.
+function extractPlainTextGlobal(text, ctx) {
+    const lines = text.split(/\r?\n/).map(l => l.trim());
+    const pctRegex = /^(\d+(?:\.\d+)?)\s*%$/;
+    const out = [];
+    let idx = 0;
+    for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(pctRegex);
+        if (!m) continue;
+        let cursor = i - 1;
+        while (cursor >= 0 && /^(unlocked|earned)\b/i.test(lines[cursor])) cursor--;
+        while (cursor >= 0 && !lines[cursor]) cursor--;
+        const descOrName = cursor >= 0 ? lines[cursor--] : '';
+        while (cursor >= 0 && !lines[cursor]) cursor--;
+        const maybeName = cursor >= 0 ? lines[cursor] : '';
+
+        let name, description;
+        if (!maybeName || isNoiseLine(maybeName)) {
+            name = descOrName; description = '';
+        } else {
+            name = maybeName; description = descOrName;
+        }
+        if (!name || isNoiseLine(name)) continue;
+
+        out.push(buildAchievementRecord(name, description, parseFloat(m[1]), idx++, ctx));
+    }
+    return out;
+}
+
+// Strategy P — Personal Achievements view: block-anchored parsing.
+// Each block is 1-3 lines separated by blank lines. Layouts:
+//   [Name]                  [Name]              [Name]
+//   [Description]           [Description]
+//   Unlocked <date>         Unlocked <date>
+// A block is achieved iff it contains an "Unlocked <date>" line.
+function extractPlainTextPersonal(text, ctx) {
+    const lines = text.split(/\r?\n/).map(l => l.trim());
+
+    // Find the achievement region — skip page nav/header before the count line
+    // "N of M (X%) achievements earned:" and stop at the footer copyright line.
+    let start = 0, end = lines.length;
+    for (let i = 0; i < lines.length; i++) {
+        if (/achievements\s+earned/i.test(lines[i])) { start = i + 1; break; }
+    }
+    for (let i = end - 1; i >= start; i--) {
+        if (/©\s*\d{4}\s*Valve|VAT\s+included|All\s+trademarks\s+are\s+property/i.test(lines[i])) {
+            end = i; break;
+        }
+    }
+
+    // Split region into blocks separated by blank lines.
+    const blocks = [];
+    let current = [];
+    for (let i = start; i < end; i++) {
+        const l = lines[i];
+        if (!l) {
+            if (current.length) { blocks.push(current); current = []; }
+        } else {
+            current.push(l);
+        }
+    }
+    if (current.length) blocks.push(current);
+
+    const out = [];
+    let idx = 0;
+    for (const block of blocks) {
+        // Filter block-level noise (section headers, hidden-count lines, etc.)
+        if (block.length === 1 && isSectionHeaderOrCounter(block[0])) continue;
+        if (block.every(l => isNoiseLine(l))) continue;
+
+        // Extract achieved status
+        let achievedIdx = block.findIndex(l => /^(unlocked|earned)\b/i.test(l));
+        const achieved = achievedIdx !== -1;
+
+        // Strip the Unlocked line to leave name + optional description
+        const meat = block.filter((_, k) => k !== achievedIdx).filter(l => !isNoiseLine(l));
+        if (meat.length === 0) continue;
+
+        const name = meat[0];
+        const description = meat.slice(1).join(' ').trim();
+        if (isSectionHeaderOrCounter(name)) continue;
+
+        const rec = buildAchievementRecord(name, description, 0, idx++, ctx);
+        if (achieved) {
+            rec.achieved = true;
+            rec.progress = 100;
+        }
+        out.push(rec);
+    }
+    return out;
+}
+
+// Line-level noise: Steam nav chrome, one-line meta strings.
+function isNoiseLine(l) {
+    if (!l) return true;
+    if (/^(steam|store|community|about|support|install\s+steam|login|language|profile|badges|inventory|screenshots|videos|workshop|reviews|guides|artwork|broadcasts|friends|groups|about\s+steam|jobs|hardware|recycling|privacy|accessibility|cookies|refunds|get\s+steam|get\s+mobile\s+apps|get\s+support|my\s+account|steam\s+ssa|steamworks|steam\s+distribution|gift\s+cards|about\s+valve|notices\s+&\s+policies|legal|valve|more)$/i.test(l)) return true;
+    if (/^(personal\s+achievements|global\s+achievements|view\s+global\s+achievement\s+stats|% of all players|view\s+achievements|view\s+details)$/i.test(l)) return true;
+    if (/^hidden achievement\.?$/i.test(l)) return true;
+    if (/^details for each achievement will be revealed once unlocked$/i.test(l)) return true;
+    if (/^\+\d+$/.test(l)) return true;                          // "+26"
+    if (/^\d+\s+hidden\s+achievements?\s+remaining/i.test(l)) return true;
+    if (/^\d+\s+of\s+\d+\s+\(\d+%\)\s+achievements\s+earned/i.test(l)) return true;
+    if (/^playtime\s+past/i.test(l)) return true;                // "Playtime past 2 weeks: 1.3h"
+    if (/^¥\s*\d/.test(l)) return true;                          // wallet balance
+    return false;
+}
+
+// Block-level: single-line strings that are clearly not achievement names.
+function isSectionHeaderOrCounter(l) {
+    if (isNoiseLine(l)) return true;
+    if (/»\s*Games\s*»/i.test(l)) return true;                    // breadcrumb
+    if (/^Link to the Steam Homepage/i.test(l)) return true;
+    if (/^©\s*\d{4}/i.test(l)) return true;
+    return false;
+}
+
+function buildAchievementRecord(name, description, globalPercentage, index, ctx) {
+    let rarity = 'common';
+    if (globalPercentage < 5) rarity = 'epic';
+    else if (globalPercentage < 15) rarity = 'rare';
+    else if (globalPercentage < 40) rarity = 'uncommon';
+
+    const appId = ctx.appId || 'custom';
+    const gameName = ctx.gameName || 'Untitled';
+    return {
+        id: `${appId}_${index}`,
+        name,
+        description,
+        icon: '🏆',
+        achieved: false,
+        progress: 0,
+        priority: 'medium',
+        favorite: false,
+        globalPercentage,
+        rarity,
+        game: gameName,
+        gameIcon: '🏆',
+    };
+}
+
+function updateAddGamePreview(parsed) {
+    const el = document.getElementById('addGamePreview');
+    if (!el) return;
+    if (!parsed || parsed.achievements.length === 0) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+    }
+    const parts = [`Found ${parsed.achievements.length} achievement${parsed.achievements.length === 1 ? '' : 's'}`];
+    if (parsed.gameName) parts.push(`for "${parsed.gameName}"`);
+    if (parsed.appId) parts.push(`(App ID ${parsed.appId})`);
+    el.textContent = parts.join(' ') + '. Review the fields below and click Add.';
+    el.classList.remove('hidden');
+}
+
+function hideAddGamePreview() {
+    const el = document.getElementById('addGamePreview');
+    if (el) el.classList.add('hidden');
+}
+
+// --- Bookmarklet ---
+// Runs in the Steam page's own context (so no CORS, no proxy). Reads
+// achievement rows via the same DOM selectors the old fetch-parser used,
+// signs the JSON with { _sth: 1 } so our paste parser recognizes it as
+// trusted structured data, and copies it to the clipboard. If the modern
+// Clipboard API is blocked, falls back to document.execCommand('copy')
+// on a hidden textarea, and finally to a prompt() the user can copy
+// out of manually.
+function buildBookmarkletSource() {
+    // Keep this as one physical string — it becomes a javascript: URL. Any
+    // future edits must remain valid without newlines in the URL-encoded form.
+    return "(function(){try{var rows=document.querySelectorAll('.achieveRow');"
+        + "if(!rows.length){alert('No achievements found. Go to a Steam achievements page like https://steamcommunity.com/stats/<AppID>/achievements first.');return;}"
+        + "var m=location.pathname.match(/\\/stats\\/(\\d+)\\//);var appId=m?m[1]:null;"
+        + "var name=null;var ts=[document.querySelector('.gameLogo a'),document.querySelector('.apphub_AppName'),document.querySelector('.profile_small_header_name'),document.querySelector('.pageheader')];"
+        + "for(var i=0;i<ts.length;i++){if(ts[i]&&ts[i].textContent){name=ts[i].textContent.trim();break;}}"
+        + "if(!name){name=document.title.replace(/^Steam\\s*Community\\s*::\\s*/i,'').replace(/\\s*::.*$/,'').trim();}"
+        + "var ach=[];rows.forEach(function(r,i){var n=r.querySelector('h3');var d=r.querySelector('h5');var p=r.querySelector('.achievePercent');var pct=0;if(p){pct=parseFloat(p.textContent.trim().replace('%',''))||0;}"
+        + "ach.push({name:n?n.textContent.trim():'Achievement '+(i+1),description:d?d.textContent.trim():'',percent:pct});});"
+        + "var payload={_sth:1,appId:appId,gameName:name,achievements:ach};var json=JSON.stringify(payload);"
+        + "var done=function(ok){if(ok){alert('Copied '+ach.length+' achievements for \"'+(name||'Unknown')+'\" (App ID '+(appId||'?')+').\\n\\nGo to Trophy Hunter -> Add Game -> paste in the box.');}else{prompt('Copy this JSON and paste it into Trophy Hunter:',json);}};"
+        + "if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(json).then(function(){done(true);},function(){var t=document.createElement('textarea');t.value=json;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();var ok=false;try{ok=document.execCommand('copy');}catch(e){}document.body.removeChild(t);done(ok);});}"
+        + "else{var t=document.createElement('textarea');t.value=json;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();var ok=false;try{ok=document.execCommand('copy');}catch(e){}document.body.removeChild(t);done(ok);}"
+        + "}catch(err){alert('Bookmarklet error: '+err.message);}})();";
+}
+
+function installBookmarkletHref() {
+    const link = document.getElementById('bookmarkletLink');
+    if (!link) return;
+    link.href = 'javascript:' + encodeURIComponent(buildBookmarkletSource());
+}
+
 // Fetch REAL achievements from Steam Community page
 async function fetchRealSteamAchievements(appId, gameName) {
     const steamUrl = `https://steamcommunity.com/stats/${appId}/achievements`;
 
     // Public CORS proxies — Steam Community doesn't serve CORS headers to
-    // browsers, so we route through a third party. These proxies are the
-    // one runtime dependency of the app; if they're down or rate-limit us,
-    // "Add game" fails and the user has no recourse but the JSON-sync path.
+    // browsers, so we route through a third party. Multiple proxies tried
+    // in order; first success wins. If all fail, throw so the caller can
+    // fall through to the bookmarklet workflow.
     const proxies = [
+        { url: `https://corsproxy.io/?${encodeURIComponent(steamUrl)}`, type: 'text' },
         { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(steamUrl)}`, type: 'text' },
+        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(steamUrl)}`, type: 'text' },
         { url: `https://api.allorigins.win/get?url=${encodeURIComponent(steamUrl)}`, type: 'json' }
     ];
 
     const PROXY_TIMEOUT_MS = 8000;
     let html = null;
-    let lastError = null;
 
     for (const proxy of proxies) {
-        // Per-proxy timeout — a hung proxy would otherwise leave "Add game"
-        // spinning forever with no user feedback.
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
         try {
-            console.log(`Trying proxy: ${proxy.url}`);
+            console.log(`[Add Game] Trying proxy: ${proxy.url}`);
             const response = await fetch(proxy.url, { signal: controller.signal });
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             if (proxy.type === 'json') {
                 const data = await response.json();
                 html = data.contents;
             } else {
                 html = await response.text();
             }
-
             if (html && html.includes('achieveRow')) {
-                console.log(`Successfully fetched data using ${proxy.url}`);
+                console.log(`[Add Game] Proxy hit: ${proxy.url}`);
                 break;
             }
+            html = null; // response didn't contain achievements — keep trying
         } catch (e) {
             const reason = e.name === 'AbortError' ? `timeout after ${PROXY_TIMEOUT_MS}ms` : e.message;
-            console.warn(`Proxy failed: ${proxy.url} — ${reason}`);
-            lastError = e;
+            console.warn(`[Add Game] Proxy failed: ${proxy.url} — ${reason}`);
         } finally {
             clearTimeout(timer);
         }
     }
 
     if (!html) {
-        // User-facing message hits the "Add game" error box; keep it actionable.
         throw new Error(
-            'Could not reach any CORS proxy. Steam Community may be blocked in your ' +
-            'region, or the proxies are temporarily unavailable. Try again in a minute, ' +
-            'or use the paste-sync flow instead of Add Game.'
+            'All CORS proxies failed. Use the bookmarklet above (fastest), ' +
+            'or paste the page content directly.'
         );
     }
 
-    // Parse HTML
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-
-    // Find achievement rows
-    const achievementRows = doc.querySelectorAll('.achieveRow');
-
-    if (achievementRows.length === 0) {
-        throw new Error('No achievements found on page or Steam profile is private');
+    const parsed = parseAchievementsHTML(html, appId);
+    if (parsed.achievements.length === 0) {
+        throw new Error('No achievements found on the page (private profile, or empty game).');
     }
 
-    const realAchievements = [];
+    // Caller-provided gameName wins; otherwise use whatever the page told us.
+    const finalName = gameName || parsed.gameName || `Game ${appId}`;
+    return parsed.achievements.map((a, i) => ({
+        ...a,
+        id: `${appId}_${i}`,
+        game: finalName,
+    }));
+}
 
-    achievementRows.forEach((row, index) => {
-        // Get achievement name
-        const nameElem = row.querySelector('h3');
-        const name = nameElem ? nameElem.textContent.trim() : `Achievement ${index + 1}`;
+// Parse a Steam achievements HTML page → { gameName, achievements[] }.
+// Shared between the CORS-proxy fetch and the paste-HTML path.
+function parseAchievementsHTML(html, appId) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const ctx = { appId: appId || null, gameName: null };
 
-        // Get description
-        const descElem = row.querySelector('h5');
-        const description = descElem ? descElem.textContent.trim() : '';
+    // Extract game name from common Steam locations.
+    const titleCandidates = [
+        doc.querySelector('.gameLogo a'),
+        doc.querySelector('.apphub_AppName'),
+        doc.querySelector('.profile_small_header_name'),
+        doc.querySelector('.pageheader'),
+        doc.querySelector('title'),
+    ];
+    for (const el of titleCandidates) {
+        if (!el) continue;
+        let t = (el.textContent || '').trim();
+        t = t.replace(/^Steam\s*Community\s*::\s*/i, '');
+        t = t.replace(/\s*[·>\-|]\s*(Global\s+)?Achievements?.*$/i, '');
+        t = t.replace(/^Achievements?\s*[·>\-|]\s*/i, '');
+        t = t.trim();
+        if (t) { ctx.gameName = t; break; }
+    }
 
-        // Get global percentage
-        const percentElem = row.querySelector('.achievePercent');
-        let globalPercentage = 0;
-        if (percentElem) {
-            const percentText = percentElem.textContent.trim().replace('%', '');
-            globalPercentage = parseFloat(percentText) || 0;
+    const rows = doc.querySelectorAll('.achieveRow');
+    const achievements = [];
+    rows.forEach((row, i) => {
+        const nameEl = row.querySelector('h3');
+        const descEl = row.querySelector('h5');
+        const percentEl = row.querySelector('.achievePercent');
+        const name = nameEl ? nameEl.textContent.trim() : `Achievement ${i + 1}`;
+        const description = descEl ? descEl.textContent.trim() : '';
+        let pct = 0;
+        if (percentEl) {
+            pct = parseFloat(percentEl.textContent.trim().replace('%', '')) || 0;
         }
-
-        // Determine rarity
-        let rarity = 'common';
-        if (globalPercentage < 5) rarity = 'epic';
-        else if (globalPercentage < 15) rarity = 'rare';
-        else if (globalPercentage < 40) rarity = 'uncommon';
-
-        // Set consistent icon
-        const icon = '🏆'; // Generic game controller icon
-
-        realAchievements.push({
-            id: `${appId}_${index}`,
-            name: name,
-            description: description,
-            icon: icon,
-            achieved: false,
-            progress: 0,
-            priority: 'medium',
-            favorite: false,
-            globalPercentage: globalPercentage,
-            rarity: rarity,
-            game: gameName,
-            gameIcon: '🏆' // Generic game controller icon
-        });
+        achievements.push(buildAchievementRecord(name, description, pct, i, ctx));
     });
 
-    console.log(`Successfully fetched ${realAchievements.length} achievements!`);
-    return realAchievements;
+    return { gameName: ctx.gameName, achievements };
 }
 
 // Create sample achievements for a game
