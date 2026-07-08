@@ -902,19 +902,27 @@ async function addGameByAppId() {
 async function fetchRealSteamAchievements(appId, gameName) {
     const steamUrl = `https://steamcommunity.com/stats/${appId}/achievements`;
 
-    // Try multiple proxies in order of reliability
+    // Public CORS proxies — Steam Community doesn't serve CORS headers to
+    // browsers, so we route through a third party. These proxies are the
+    // one runtime dependency of the app; if they're down or rate-limit us,
+    // "Add game" fails and the user has no recourse but the JSON-sync path.
     const proxies = [
         { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(steamUrl)}`, type: 'text' },
         { url: `https://api.allorigins.win/get?url=${encodeURIComponent(steamUrl)}`, type: 'json' }
     ];
 
+    const PROXY_TIMEOUT_MS = 8000;
     let html = null;
     let lastError = null;
 
     for (const proxy of proxies) {
+        // Per-proxy timeout — a hung proxy would otherwise leave "Add game"
+        // spinning forever with no user feedback.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
         try {
             console.log(`Trying proxy: ${proxy.url}`);
-            const response = await fetch(proxy.url);
+            const response = await fetch(proxy.url, { signal: controller.signal });
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
             if (proxy.type === 'json') {
@@ -929,13 +937,21 @@ async function fetchRealSteamAchievements(appId, gameName) {
                 break;
             }
         } catch (e) {
-            console.warn(`Proxy failed: ${proxy.url}`, e);
+            const reason = e.name === 'AbortError' ? `timeout after ${PROXY_TIMEOUT_MS}ms` : e.message;
+            console.warn(`Proxy failed: ${proxy.url} — ${reason}`);
             lastError = e;
+        } finally {
+            clearTimeout(timer);
         }
     }
 
     if (!html) {
-        throw lastError || new Error('All proxies failed to fetch data');
+        // User-facing message hits the "Add game" error box; keep it actionable.
+        throw new Error(
+            'Could not reach any CORS proxy. Steam Community may be blocked in your ' +
+            'region, or the proxies are temporarily unavailable. Try again in a minute, ' +
+            'or use the paste-sync flow instead of Add Game.'
+        );
     }
 
     // Parse HTML

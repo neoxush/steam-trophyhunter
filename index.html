@@ -6,9 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Steam Trophy Hunter</title>
     <link rel="stylesheet" href="styles.css">
+    <script>
+        // Pre-paint theme boot: set data-theme on <html> from localStorage before
+        // the body renders, so dark-theme users don't see a light-mode flash.
+        // CSS handles 'auto' via prefers-color-scheme media query.
+        (function () {
+            var saved = null;
+            try { saved = localStorage.getItem('theme'); } catch (e) { /* private mode */ }
+            document.documentElement.setAttribute('data-theme', saved || 'auto');
+        })();
+    </script>
 </head>
 
-<body data-theme="light">
+<body>
     <!-- Fixed Navigation -->
     <nav class="fixed-nav">
         <div class="nav-header">
