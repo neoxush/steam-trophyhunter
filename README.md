@@ -75,10 +75,9 @@ A lightweight HTML toolkit for tracking and hunting Steam achievements across mu
 ### File Structure
 ```
 steam-trophyhunter/
-├── index.html          # Main application interface
+├── index.html          # Main application interface (all modals inline)
 ├── app.js              # Core application logic
 ├── styles.css          # Styling and themes
-├── guide_modal.html    # Guide generation interface
 └── README.md           # This documentation
 ```
 
